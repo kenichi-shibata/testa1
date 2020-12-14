@@ -1,0 +1,64 @@
+# feature.gocd.yaml
+format_version: 5
+common:
+  plan-task: &plan-task
+    command: bash
+    arguments:
+      - -c
+      - |
+        set -e
+        export TF_VAR_account=$ACCOUNT
+        docker run -v $PWD:/usr/src -w /usr/src/terraform -u 998:998 hashicorp/terraform:$TERRAFORM_VERSION init -backend-config="workspace_key_prefix=$ACCOUNT"
+        docker run -v $PWD:/usr/src -w /usr/src/terraform -u 998:998 hashicorp/terraform:$TERRAFORM_VERSION workspace select $ENVIRONMENT || docker run -v $PWD:/usr/src -w /usr/src/terraform -u 998:998 hashicorp/terraform:$TERRAFORM_VERSION workspace new $ENVIRONMENT
+        docker run -v $PWD:/usr/src -w /usr/src/terraform -e TF_VAR_account -u 998:998 hashicorp/terraform:$TERRAFORM_VERSION plan -out=plan.out -input=false
+        tar -zcf terraform.tgz terraform/.terraform
+
+  apply-task: &apply-task
+    command: bash
+    arguments:
+      - -c
+      - |
+        set -e
+        tar -xzf terraform.tgz 
+        docker run -v $PWD:/usr/src -w /usr/src/terraform -e TF_VAR_account -u 998:998 hashicorp/terraform:$TERRAFORM_VERSION apply -auto-approve -input=false plan.out
+
+pipelines:
+  my-feature:
+    group: my-feature
+    materials:
+      repo:
+        git: git@github.com:ComparetheMarket/engineering.terraform-boilerplate.git
+        branch: feature-set-spike
+    tracking_tool:
+      link: https://comparethemarket.atlassian.net/browse/DVPJ-${ID}
+      regex: DVPJ-(\\d+)
+    environment_variables:
+      TERRAFORM_VERSION: 0.13.2
+      ACCOUNT: dev
+      ENVIRONMENT: default
+    stages:
+      - dev-plan:
+          artifacts:
+            - build:
+                source: terraform/plan.out
+            - build:
+                source: terraform.tgz
+          tasks:
+            - exec: *plan-task
+      - dev-apply:
+          approval:
+            type: manual
+            allow_only_on_success: true
+          tasks:
+            - fetch:
+                stage: dev-plan
+                job: dev-plan
+                is_file: true
+                source: plan.out
+                destination: terraform
+            - fetch:
+                stage: dev-plan
+                job: dev-plan
+                is_file: true
+                source: terraform.tgz
+            - exec: *apply-task

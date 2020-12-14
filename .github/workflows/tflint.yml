@@ -1,0 +1,12 @@
+on: pull_request
+name: tflint action
+
+jobs:
+  tflint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: tflint
+        run: |
+          docker run --rm -v $(pwd):/data -t wata727/tflint -c /data/.tflint.hcl

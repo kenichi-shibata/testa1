@@ -1,0 +1,86 @@
+# certificates.gocd.yaml
+format_version: 5
+common:
+  plan-stage: &plan-stage
+    approval: manual
+    artifacts:
+      - build:
+          source: "#{cert_folder}/plan.out"
+      - build:
+          source: "#{cert_folder}/terraform.tgz"
+    tasks:
+      - exec:
+          working_directory: "#{cert_folder}"
+          command: bash
+          arguments:
+            - -c
+            - |
+              set -e
+              NAME=${GO_STAGE_NAME%-plan}
+              terraform init
+              terraform workspace select $NAME || terraform workspace new $NAME
+              terraform plan -out=plan.out -input=false
+              tar -zcf terraform.tgz .terraform
+
+  apply-task: &apply-task
+    working_directory: "#{cert_folder}"
+    command: bash
+    arguments:
+      - -c
+      - |
+        set -e
+        tar -xzf terraform.tgz 
+        terraform apply -auto-approve -input=false plan.out
+
+pipelines:
+  certificates:
+    group: certificates
+    materials:
+      repo:
+        git: git@github.com:ComparetheMarket/account-infrastructure.git
+        branch: master
+    tracking_tool:
+      link: https://comparethemarket.atlassian.net/browse/DVPJ-${ID}
+      regex: DVPJ-(\\d+)
+    parameters:
+      cert_folder: certificates2
+    stages:
+      - main-plan: *plan-stage
+      - main-apply:
+          approval:
+            type: manual
+            allow_only_on_success: true
+          tasks:
+            - fetch:
+                stage: main-plan
+                job: main-plan
+                is_file: true
+                source: plan.out
+                destination: "#{cert_folder}"
+            - fetch:
+                stage: main-plan
+                job: main-plan
+                is_file: true
+                source: terraform.tgz
+                destination: "#{cert_folder}"
+            - exec: *apply-task
+
+      - nonproduction-plan: *plan-stage
+      - nonproduction-apply:
+          approval:
+            type: manual
+            allow_only_on_success: true
+          tasks:
+            - fetch:
+                stage: nonproduction-plan
+                job: nonproduction-plan
+                is_file: true
+                source: plan.out
+                destination: "#{cert_folder}"
+            - fetch:
+                stage: nonproduction-plan
+                job: nonproduction-plan
+                is_file: true
+                source: terraform.tgz
+                destination: "#{cert_folder}"
+            - exec: *apply-task
